@@ -93,6 +93,13 @@ class FeatureContext implements Context
 	public $response = null;
 
 	/**
+	 * IDs of containers stopped by the "I stop ... directly" step in the current scenario.
+	 *
+	 * @var string[]
+	 */
+	public $stoppedContainers = [];
+
+	/**
 	 * Initializes context.
 	 */
 	public function __construct()
@@ -288,17 +295,12 @@ class FeatureContext implements Context
 	 */
 	public function followingContainersOfSiteShouldBeRemoved($site, TableNode $table)
 	{
-		$containers = $table->getHash();
-		$site_name = implode(explode('.', $site));
-
-		foreach ($containers as $container) {
-
-			$sevice = $container['container'];
-			$container_name = $site_name . '_' . $sevice . '_1';
-
-			exec("docker inspect -f '{{.State.Running}}' $container_name > /dev/null 2>&1", $exec_out, $return);
-			if (!$return) {
-				throw new Exception("$container_name has not been removed!");
+		// Upstream looked for compose v1 names (<site>_<service>_1), which compose v2 never creates, so it always passed.
+		foreach ( $table->getHash() as $container ) {
+			$service    = $container['container'];
+			$containers = self::serviceContainers( $site, $service );
+			if ( ! empty( $containers ) ) {
+				throw new Exception( "The $service container of $site has not been removed: " . json_encode( $containers ) );
 			}
 		}
 	}
@@ -407,6 +409,13 @@ class FeatureContext implements Context
 	 */
 	public function cleanupScenario(AfterScenarioScope $scope)
 	{
+		// A scenario that failed after stopping a container behind ee's back must not leave it down for the next one.
+		if ( ! $scope->getTestResult()->isPassed() ) {
+			foreach ( $this->stoppedContainers as $id ) {
+				EE::launch( 'docker start ' . escapeshellarg( $id ), false, true );
+			}
+		}
+		$this->stoppedContainers = [];
 		$this->commands = [];
 		$this->cwd      = null;
 		$this->response = null;
@@ -418,14 +427,23 @@ class FeatureContext implements Context
 	 */
 	public function thereShouldBeContainersWithLabel($expected_running_containers, PyStringNode $pyStringNode)
 	{
-		$labels = $pyStringNode->getStrings();
-		$label_string = implode(' -f label=',$labels);
+		$filters = '';
+		foreach ( array_filter( array_map( 'trim', $pyStringNode->getStrings() ) ) as $label ) {
+			$filters .= ' --filter ' . escapeshellarg( 'label=' . $label );
+		}
+		if ( '' === $filters ) {
+			throw new Exception( 'No labels given.' );
+		}
 
-		$result = EE::launch( "docker ps -qf label=$label_string | wc -l", false, true );
-		$running_containers = (int) trim($result->stdout);
+		$result = EE::launch( "docker ps -q$filters", false, true );
+		if ( 0 !== $result->return_code ) {
+			throw new Exception( "docker ps failed.\n" . self::describe( $result ) );
+		}
+		$running_containers = count( array_filter( explode( "\n", trim( $result->stdout ) ) ) );
 
-		if($expected_running_containers === $running_containers) {
-			throw new Exception("Expected $expected_running_containers running containers. Found: $running_containers");
+		// Upstream compared the string argument with an int using === and threw on a match, so it could never fail.
+		if ( (int) $expected_running_containers !== $running_containers ) {
+			throw new Exception( "Expected $expected_running_containers running containers. Found: $running_containers\n" . $result->stdout );
 		}
 	}
 
@@ -481,6 +499,11 @@ class FeatureContext implements Context
 	public static function sitePrefix()
 	{
 		$prefix = getenv( 'BEHAT_SITE_PREFIX' );
+
+		// A short or foreign prefix would make the cleanup delete sites this suite does not own.
+		if ( $prefix && ! preg_match( '/^bh-[a-z0-9-]+-$/', $prefix ) ) {
+			throw new Exception( "BEHAT_SITE_PREFIX must look like bh-<name>- (got '$prefix')." );
+		}
 
 		return $prefix ? $prefix : self::DEFAULT_SITE_PREFIX;
 	}
@@ -926,6 +949,32 @@ class FeatureContext implements Context
 	}
 
 	/**
+	 * Order- and duplicate-insensitive check of a comma-separated env value such as VIRTUAL_HOST.
+	 *
+	 * @Then the :service service of site :site should have env :name listing :values
+	 */
+	public function theServiceOfSiteShouldHaveEnvListing( $service, $site, $name, $values )
+	{
+		$id     = self::serviceContainerId( $site, $service );
+		$result = EE::launch( "docker inspect -f '{{json .Config.Env}}' $id", false, true );
+		$actual = null;
+		foreach ( (array) json_decode( trim( $result->stdout ), true ) as $env ) {
+			if ( 0 === strpos( $env, $name . '=' ) ) {
+				$actual = substr( $env, strlen( $name ) + 1 );
+			}
+		}
+		if ( null === $actual ) {
+			throw new Exception( "The $service container of $site has no $name env." );
+		}
+		$items   = array_map( 'trim', explode( ',', $actual ) );
+		$missing = array_diff( array_map( 'trim', explode( ',', $values ) ), $items );
+		$extra   = array_diff( $items, array_map( 'trim', explode( ',', $values ) ) );
+		if ( ! empty( $missing ) || ! empty( $extra ) ) {
+			throw new Exception( "$name of the $service container of $site is '$actual', expected the entries '$values'." );
+		}
+	}
+
+	/**
 	 * @Then the :service service of site :site should have label :label
 	 */
 	public function theServiceOfSiteShouldHaveLabel( $service, $site, $label )
@@ -950,6 +999,9 @@ class FeatureContext implements Context
 		$result = EE::launch( "docker $action $id", false, true );
 		if ( 0 !== $result->return_code ) {
 			throw new Exception( "docker $action failed.\n" . self::describe( $result ) );
+		}
+		if ( 'stop' === $action ) {
+			$this->stoppedContainers[] = $id;
 		}
 	}
 
