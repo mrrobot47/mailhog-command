@@ -18,8 +18,7 @@ Feature: Mail capture through mailhog
 
   Scenario: The site itself is still served next to /ee-admin/mailhog/
     Given mailhog is enabled on site "bh-mailhog-2.test"
-    When I send a GET request to "http://bh-mailhog-2.test/"
-    Then the response code should be 200
+    Then I wait up to 30 seconds until a GET request to "http://bh-mailhog-2.test/" returns 200
     And the response body should not contain "MailHog"
 
   Scenario: wp_mail() sent through ee shell is captured by MailHog

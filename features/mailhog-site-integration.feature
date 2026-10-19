@@ -1,5 +1,5 @@
 Feature: Mailhog and the site lifecycle
-  How mailhog interacts with other ee commands: site types without a mailhog service, site create on dev environments, site disable/enable/refresh/restart/delete, and state drift behind ee's back.
+  How mailhog interacts with other ee commands and site types: HTML sites (no mailhog service), PHP sites (same service as WordPress), site create on dev environments, site disable/enable/refresh/restart/delete, and state drift behind ee's back.
 
   # Keep first: it creates bh-mailhog-4.test, which the later scenarios reuse.
   Scenario: Creating a WordPress site with --env=production does not enable mailhog
@@ -23,22 +23,65 @@ Feature: Mailhog and the site lifecycle
       | local   | bh-mailhog-7.test |
       | develop | bh-mailhog-8.test |
 
-  Scenario Outline: <type> sites have no mailhog service, so mailhog <subcommand> fails
-    Given the site "<site>" exists with flags "--type=<type>"
-    When I run 'bin/ee mailhog <subcommand> <site>'
+  Scenario Outline: HTML sites have no mailhog service, so mailhog <subcommand> fails
+    Given the site "bh-mailhog-5.test" exists with flags "--type=html"
+    When I run 'bin/ee mailhog <subcommand> bh-mailhog-5.test'
     Then the exit code should be 1
-    And STDERR should contain "<site> site does not have support to enable/disable mailhog."
-    And the site "<site>" should have "mailhog_enabled" set to "0"
-    And the "mailhog" service of site "<site>" should not exist
+    And STDERR should contain "bh-mailhog-5.test site does not have support to enable/disable mailhog."
+    And the site "bh-mailhog-5.test" should have "mailhog_enabled" set to "0"
+    And the "mailhog" service of site "bh-mailhog-5.test" should not exist
 
     Examples:
-      | type | site              | subcommand |
-      | html | bh-mailhog-5.test | enable     |
-      | html | bh-mailhog-5.test | disable    |
-      | html | bh-mailhog-5.test | status     |
-      | php  | bh-mailhog-6.test | enable     |
-      | php  | bh-mailhog-6.test | disable    |
-      | php  | bh-mailhog-6.test | status     |
+      | subcommand |
+      | enable     |
+      | disable    |
+      | status     |
+
+  # MAILHOG-5 (new): with --force, enable never calls check_mailhog_available(), and the failed compose up, postconf and postfix restart are ignored (MAILHOG-3), so it reports success and records mailhog_enabled=1 on a site without mailhog. Asserts the intended behaviour, so it fails until fixed.
+  @known-bug
+  Scenario: mailhog enable --force still refuses a site type without mailhog
+    Given the site "bh-mailhog-11.test" exists with flags "--type=html"
+    When I run 'bin/ee mailhog enable bh-mailhog-11.test --force'
+    Then the exit code should be 1
+    And STDERR should contain "bh-mailhog-11.test site does not have support to enable/disable mailhog."
+    And STDOUT should not contain "Mailhog enabled for"
+    And the site "bh-mailhog-11.test" should have "mailhog_enabled" set to "0"
+
+  # MAILHOG-4 (new): enable runs init_global_admin_tools_auth() before it resolves and checks the site, so a refused enable still reports (or, on a machine without global auth, creates) the global admin-tools auth. Asserts the intended behaviour, so it fails until fixed.
+  @known-bug
+  Scenario Outline: A refused mailhog enable does not touch the global admin-tools auth (<case>)
+    Given the site "bh-mailhog-5.test" exists with flags "--type=html"
+    When I run 'bin/ee mailhog enable <site>'
+    Then the exit code should be 1
+    And STDERR should contain "<error>"
+    And STDOUT should not contain "admin-tools"
+
+    Examples:
+      | case         | site                    | error                                                                    |
+      | unknown site | bh-mailhog-unknown.test | Could not find the site you wish to run mailhog enable command on.      |
+      | html site    | bh-mailhog-5.test       | bh-mailhog-5.test site does not have support to enable/disable mailhog. |
+
+  # PHP sites get the same mailhog service as WordPress sites (site-type-php Site_PHP_Docker), so the whole lifecycle works there too.
+  Scenario: PHP sites support mailhog enable, status and disable
+    Given the site "bh-mailhog-6.test" exists with flags "--type=php"
+    And mailhog is disabled on site "bh-mailhog-6.test"
+    When I run 'bin/ee mailhog enable bh-mailhog-6.test'
+    Then the command should succeed
+    And STDOUT should contain "Success: Mailhog enabled for bh-mailhog-6.test site"
+    And the "mailhog" service of site "bh-mailhog-6.test" should be running
+    And the site "bh-mailhog-6.test" should have "mailhog_enabled" set to "1"
+    And the file "config/postfix/main.cf" of site "bh-mailhog-6.test" should match "/^relayhost = mailhog:1025$/m"
+    And I wait up to 30 seconds until a GET request to "http://bh-mailhog-6.test/ee-admin/mailhog/" returns 200
+    And the response body should contain "MailHog"
+    When I run 'bin/ee mailhog status bh-mailhog-6.test'
+    Then STDOUT should be "Mailhog is UP for bh-mailhog-6.test site."
+    When I run 'bin/ee mailhog disable bh-mailhog-6.test'
+    Then the command should succeed
+    And the "mailhog" service of site "bh-mailhog-6.test" should not be running
+    And the site "bh-mailhog-6.test" should have "mailhog_enabled" set to "0"
+    And the file "config/postfix/main.cf" of site "bh-mailhog-6.test" should match "/^relayhost =\s*$/m"
+    When I run 'bin/ee mailhog status bh-mailhog-6.test'
+    Then STDOUT should be "Mailhog is DOWN for bh-mailhog-6.test site."
 
   Scenario Outline: mailhog <subcommand> refuses a disabled site
     Given the site "bh-mailhog-4.test" exists with flags "--type=wp --env=production"
@@ -104,7 +147,7 @@ Feature: Mailhog and the site lifecycle
       | enabled  | be running     | 1    |
       | disabled | not be running | 0    |
 
-  # MAILHOG-1 (new): status/disable look only at the container. When it is stopped outside ee, `disable` refuses ("already down") and sites.mailhog_enabled stays 1, so the next `ee site enable`/`refresh` silently starts mailhog again.
+  # MAILHOG-1 (new): status/disable look only at the container. When it is stopped outside ee, `disable` refuses ("already down") and sites.mailhog_enabled stays 1, so the next `ee site enable`/`refresh` silently starts mailhog again. Asserts the intended behaviour, so it fails until fixed.
   @known-bug
   Scenario: Disabling mailhog after its container was stopped outside ee clears the DB flag
     Given the site "bh-mailhog-4.test" exists with flags "--type=wp --env=production"
@@ -115,14 +158,29 @@ Feature: Mailhog and the site lifecycle
     And the site "bh-mailhog-4.test" should have "mailhog_enabled" set to "0"
     And the file "config/postfix/main.cf" of site "bh-mailhog-4.test" should match "/^relayhost =\s*$/m"
 
-  # MAILHOG-3 (new): enable ignores the result of `postconf` in the postfix container. With postfix stopped it prints success and records mailhog_enabled=1, while postfix (started again by the final restart) keeps its old relayhost, so mail is not captured.
+  # MAILHOG-1 (reverse drift): a disabled mailhog whose container runs again without ee (docker start, or Docker itself: `restart: always` restarts a stopped container when the daemon restarts) is reported UP, and enable refuses ("already up") without setting the relayhost or the flag. Asserts the intended behaviour, so it fails until fixed.
+  @known-bug
+  Scenario: Enabling mailhog after its container was started outside ee configures the relay
+    Given the site "bh-mailhog-4.test" exists with flags "--type=wp --env=production"
+    # Enable first so a stopped mailhog container exists even when this scenario runs alone.
+    And mailhog is enabled on site "bh-mailhog-4.test"
+    And mailhog is disabled on site "bh-mailhog-4.test"
+    When I start the "mailhog" container of site "bh-mailhog-4.test" directly
+    And I run 'bin/ee mailhog enable bh-mailhog-4.test'
+    Then the command should succeed
+    And the site "bh-mailhog-4.test" should have "mailhog_enabled" set to "1"
+    And the file "config/postfix/main.cf" of site "bh-mailhog-4.test" should match "/^relayhost = mailhog:1025$/m"
+
+  # MAILHOG-3 (new): enable ignores the results of compose up, `postconf` and the postfix restart. With postfix stopped it prints success and records mailhog_enabled=1, while postfix (started again by the final restart) keeps an empty relayhost, so mail is not captured. Asserts the intended behaviour, so it fails until fixed.
   @known-bug
   Scenario: Enabling mailhog while postfix is stopped still configures the relay
     Given the site "bh-mailhog-4.test" exists with flags "--type=wp --env=production"
     And mailhog is disabled on site "bh-mailhog-4.test"
     When I stop the "postfix" container of site "bh-mailhog-4.test" directly
     And I run 'bin/ee mailhog enable bh-mailhog-4.test'
-    Then the "postfix" service of site "bh-mailhog-4.test" should be running
+    Then the command should succeed
+    And the "postfix" service of site "bh-mailhog-4.test" should be running
+    And the site "bh-mailhog-4.test" should have "mailhog_enabled" set to "1"
     And the file "config/postfix/main.cf" of site "bh-mailhog-4.test" should match "/^relayhost = mailhog:1025$/m"
 
   Scenario: Deleting a site removes its mailhog container
@@ -133,3 +191,13 @@ Feature: Mailhog and the site lifecycle
     And the site "bh-mailhog-4.test" should not exist
     And the "mailhog" service of site "bh-mailhog-4.test" should not exist
     And the "postfix" service of site "bh-mailhog-4.test" should not exist
+    And Following containers of site "bh-mailhog-4.test" should be removed:
+      | container |
+      | mailhog   |
+      | postfix   |
+      | nginx     |
+      | php       |
+    And There should be 0 containers with labels
+      """
+      io.easyengine.site=bh-mailhog-4.test
+      """

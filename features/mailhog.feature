@@ -38,6 +38,7 @@ Feature: Mailhog command surface and argument validation
       | disable    |
       | status     |
 
+  # For enable this also runs init_global_admin_tools_auth() first (MAILHOG-4), which creates the global admin-tools auth on a machine that has none.
   Scenario Outline: ee mailhog <subcommand> on an unknown site fails
     When I run 'bin/ee mailhog <subcommand> bh-mailhog-unknown.test'
     Then the exit code should be 1
