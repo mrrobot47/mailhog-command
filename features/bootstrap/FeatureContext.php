@@ -73,10 +73,12 @@ class FeatureContext implements Context
 	public $ee_path;
 
 	/**
-	 * Only sites whose name starts with this prefix are ever deleted by the hooks, so parallel suites never collide.
-	 * Override with the BEHAT_SITE_PREFIX environment variable.
+	 * Only sites whose name starts with this prefix are ever deleted by the hooks; the features use it in every site name.
 	 */
-	const DEFAULT_SITE_PREFIX = 'bh-mailhog-';
+	const SITE_PREFIX = 'bh-mailhog-';
+
+	/** @var bool Whether "ee phar is generated" ran, so the cleanup may remove ee.phar and ee-old.phar. */
+	private static $pharGenerated = false;
 
 	/**
 	 * Working directory for `I run` steps (null: the core root).
@@ -113,6 +115,7 @@ class FeatureContext implements Context
 	 */
 	public function eePharIsPresent()
 	{
+		self::$pharGenerated = true;
 		// Checks if phar already exists, replaces it
 		if(file_exists('ee-old.phar')) {
 			// Below exec call is required as currenly `ee cli update` is ran with root
@@ -463,11 +466,13 @@ class FeatureContext implements Context
 	{
 		self::deletePrefixedSites();
 
-		if(file_exists('ee.phar')) {
-			unlink('ee.phar');
-		}
-		if(file_exists('ee-old.phar')) {
-			unlink('ee-old.phar');
+		// Only phars built by "ee phar is generated", never a build of the checkout's owner.
+		if ( self::$pharGenerated ) {
+			foreach ( [ 'ee.phar', 'ee-old.phar' ] as $phar ) {
+				if ( file_exists( $phar ) ) {
+					unlink( $phar );
+				}
+			}
 		}
 	}
 
@@ -476,7 +481,7 @@ class FeatureContext implements Context
 	 */
 	public static function deletePrefixedSites()
 	{
-		$prefix = self::sitePrefix();
+		$prefix = self::SITE_PREFIX;
 		$result = EE::launch( self::eeBin() . ' site list --format=text', false, true );
 
 		foreach ( explode( "\n", $result->stdout ) as $site ) {
@@ -495,18 +500,6 @@ class FeatureContext implements Context
 	 * They act on the LAST command run (unlike the upstream steps above, which read command 1).
 	 * ==========================================================================
 	 */
-
-	public static function sitePrefix()
-	{
-		$prefix = getenv( 'BEHAT_SITE_PREFIX' );
-
-		// A short or foreign prefix would make the cleanup delete sites this suite does not own.
-		if ( $prefix && ! preg_match( '/^bh-[a-z0-9-]+-$/', $prefix ) ) {
-			throw new Exception( "BEHAT_SITE_PREFIX must look like bh-<name>- (got '$prefix')." );
-		}
-
-		return $prefix ? $prefix : self::DEFAULT_SITE_PREFIX;
-	}
 
 	public static function eeBin()
 	{
@@ -1197,7 +1190,8 @@ class FeatureContext implements Context
 	 */
 	public function theResponseBodyShouldNotContain( $text )
 	{
-		if ( null === $this->response || false !== strpos( $this->response['body'], $text ) ) {
+		// A failed transfer has an empty body, which must not count as "does not contain".
+		if ( null === $this->response || 0 === $this->response['code'] || '' !== $this->response['error'] || false !== strpos( $this->response['body'], $text ) ) {
 			throw new Exception( "Response body unexpectedly contains: $text\n" . $this->describeResponse() );
 		}
 	}
@@ -1288,7 +1282,7 @@ class FeatureContext implements Context
 			function () use ( $url, $text ) {
 				$response = $this->request( $url, '127.0.0.1' );
 
-				return 0 !== $response['code'] && false === strpos( $response['body'], $text );
+				return 0 !== $response['code'] && '' === $response['error'] && false === strpos( $response['body'], $text );
 			},
 			"$url no longer contains '$text'"
 		);

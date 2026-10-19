@@ -1,6 +1,6 @@
 # mailhog-command Behat coverage
 
-Suite for `ee mailhog enable|disable|status`. Sites are named `bh-mailhog-<n>.test`; `@BeforeFeature` and `@AfterFeature` delete only sites with the `bh-mailhog-` prefix (override with `BEHAT_SITE_PREFIX`). HTTP checks resolve the site name to 127.0.0.1 (whitelisted by the global admin-tools auth, arrives as 10.1.0.1) or to the public IP (`hostname -I`, override with `BEHAT_PUBLIC_IP`), where auth applies.
+Suite for `ee mailhog enable|disable|status`. Sites are named `bh-mailhog-<n>.test`; `@BeforeFeature` and `@AfterFeature` delete only sites with the `bh-mailhog-` prefix. HTTP checks resolve the site name to 127.0.0.1 (whitelisted by the global admin-tools auth, arrives as 10.1.0.1) or to the public IP (`hostname -I`, override with `BEHAT_PUBLIC_IP`), where auth applies.
 
 ## Inventory
 
@@ -121,6 +121,5 @@ Estimated runtime: about 22 to 27 minutes (8 WordPress sites at 1 to 1.5 minutes
 - New shared steps (last-command assertions, sqlite reads, label-based container lookup, CURLOPT_RESOLVE HTTP helpers with polling, file checks) live in a marked section; mailhog-specific steps are in a second section.
 - Upstream steps fixed: "There should be :n containers with labels" compared a string with an int using `===` and threw on a match, so it never failed; "Following containers of site :site should be removed" looked for compose v1 names (`<site>_<service>_1`) and always passed. Both now use label filters; the site delete scenario uses them.
 - A failed scenario restarts the containers it stopped with "I stop ... directly", so later scenarios do not inherit a stopped postfix.
-- `BEHAT_SITE_PREFIX` must look like `bh-<name>-`, so the cleanup can never match foreign sites.
 
 `vendor/bin/behat --dry-run --strict` reports no undefined or ambiguous steps. Its exit code is 1 even for the upstream site-command suite, because Behat 3.8 counts dry-run's skipped steps as failures under `--strict`.
