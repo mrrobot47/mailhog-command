@@ -1380,6 +1380,17 @@ class FeatureContext implements Context
 		// ee wraps --command in `bash -c "..."` on the host shell, so it has to survive double-quote expansion.
 		$command = addcslashes( $script, '"$`\\' );
 
+		// mailhog enable/disable restart postfix and return before it listens again, so wait for port 25 first.
+		$php_id   = self::serviceContainerId( $site, 'php' );
+		$deadline = microtime( true ) + 30;
+		do {
+			$probe = EE::launch( sprintf( "docker exec %s php -r 'exit( @fsockopen( \"postfix\", 25 ) ? 0 : 1 );'", escapeshellarg( $php_id ) ), false, true );
+			if ( 0 === $probe->return_code ) {
+				break;
+			}
+			usleep( 500000 );
+		} while ( microtime( true ) < $deadline );
+
 		// No --user: the php image already runs as www-data, and --user with --command hits SHELL-1.
 		$this->commands[] = $this->launch(
 			sprintf( 'bin/ee shell %s --skip-tty --command=%s', $site, escapeshellarg( $command ) ),
