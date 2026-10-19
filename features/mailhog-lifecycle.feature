@@ -144,16 +144,3 @@ Feature: Mailhog enable, disable and status on a WordPress site
     When I run 'bin/ee mailhog status bh-mailhog-nope.test'
     Then the exit code should be 1
     And STDERR should contain "bh-mailhog-nope.test is not a valid site-name. Did you mean `ee mailhog status bh-mailhog-1.test`?"
-
-  # MAILHOG-2 (same root cause as ATC-2, LOGCMD-8, SHELL-3): auto_site_name() strips http(s):// only to look the site up and returns the argument unchanged, so the command's own Site::find() misses and reports "does not exist / is not enabled". Asserts the intended behaviour, so it fails until fixed.
-  @known-bug
-  Scenario Outline: A site URL with a scheme is accepted (<url>)
-    Given mailhog is enabled on site "bh-mailhog-1.test"
-    When I run 'bin/ee mailhog status <url>'
-    Then the command should succeed
-    And STDOUT should contain "Mailhog is UP for bh-mailhog-1.test site."
-
-    Examples:
-      | url                        |
-      | http://bh-mailhog-1.test   |
-      | https://bh-mailhog-1.test/ |

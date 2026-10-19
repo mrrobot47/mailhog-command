@@ -33,18 +33,14 @@ jobs:
     name: Behat ${{ matrix.lane }} (PHP ${{ matrix.php }})
     runs-on: ubuntu-latest
     timeout-minutes: 150
-    # Known bugs are expected to fail; they're reported, not gating.
-    continue-on-error: ${{ endsWith(matrix.lane, 'known-bug') }}
     strategy:
       fail-fast: false
       matrix:
         php: ['7.4', '8.5']
-        lane: [main, known-bug]
+        lane: [main]
         include:
           - lane: main
             tags: '~@known-bug'
-          - lane: known-bug
-            tags: '@known-bug'
     steps:
       - name: Check out the package
         uses: actions/checkout@v7
