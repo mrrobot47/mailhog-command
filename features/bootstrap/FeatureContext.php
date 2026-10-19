@@ -1380,8 +1380,9 @@ class FeatureContext implements Context
 		// ee wraps --command in `bash -c "..."` on the host shell, so it has to survive double-quote expansion.
 		$command = addcslashes( $script, '"$`\\' );
 
+		// No --user: the php image already runs as www-data, and --user with --command hits SHELL-1.
 		$this->commands[] = $this->launch(
-			sprintf( 'bin/ee shell %s --user=www-data --skip-tty --command=%s', $site, escapeshellarg( $command ) ),
+			sprintf( 'bin/ee shell %s --skip-tty --command=%s', $site, escapeshellarg( $command ) ),
 			EE_ROOT
 		);
 	}
