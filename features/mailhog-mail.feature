@@ -45,7 +45,8 @@ Feature: Mail capture through mailhog
     And I wait up to 30 seconds until a GET request to "http://bh-mailhog-2.test/ee-admin/mailhog/" returns 200
     When I run 'bin/ee mailhog disable bh-mailhog-2.test'
     Then the command should succeed
-    And I wait up to 30 seconds until a GET request to "http://bh-mailhog-2.test/ee-admin/mailhog/" does not contain "MailHog"
+    # One request can hang for the 30 s curl timeout right after the container stops (seen once on PHP 7.4), so allow a few.
+    And I wait up to 90 seconds until a GET request to "http://bh-mailhog-2.test/ee-admin/mailhog/" does not contain "MailHog"
     And the file "config/postfix/main.cf" of site "bh-mailhog-2.test" should match "/^relayhost =\s*$/m"
 
   Scenario: wp_mail() still succeeds with mailhog disabled
