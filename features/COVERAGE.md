@@ -49,8 +49,12 @@ Suite for `ee mailhog enable|disable|status`. Sites are named `bh-mailhog-<n>.te
 | B8 | disable: `docker-compose stop mailhog`, relayhost cleared, postfix restarted, `mailhog_enabled = 0` | mailhog-lifecycle.feature: "Disabling mailhog stops the container, ..." |
 | B9 | disable twice: "Mailhog is already down." exit 1, no change | mailhog-lifecycle.feature: "Disabling mailhog twice fails and changes nothing" |
 | B10 | Repeated enable/disable cycles | mailhog-lifecycle.feature: "Repeated enable/disable cycles leave a consistent state" |
-| B11 | Site types without a mailhog service (html, php): "does not have support" for all 3 subcommands, DB untouched | mailhog-site-integration.feature: "<type> sites have no mailhog service, so mailhog <subcommand> fails" (6 examples) |
+| B11 | HTML sites (no mailhog service): "does not have support" for all 3 subcommands, DB untouched | mailhog-site-integration.feature: "HTML sites have no mailhog service, so mailhog <subcommand> fails" (3 examples) |
+| B11b | PHP sites have the same mailhog service as WordPress: enable, status, disable, relayhost, UI | mailhog-site-integration.feature: "PHP sites support mailhog enable, status and disable" |
+| B11c | `enable --force` skips the support check (html site gets success and `mailhog_enabled = 1`) | mailhog-site-integration.feature: "mailhog enable --force still refuses a site type without mailhog" `@known-bug` MAILHOG-5 |
+| B11d | enable sets up/reports the global admin-tools auth before checking the site (unknown, html) | mailhog-site-integration.feature: "A refused mailhog enable does not touch the global admin-tools auth (<case>)" `@known-bug` MAILHOG-4 (2 examples) |
 | B12 | State drift: container stopped outside ee | mailhog-site-integration.feature: "Disabling mailhog after its container was stopped outside ee clears the DB flag" `@known-bug` MAILHOG-1 |
+| B12b | Reverse drift: disabled container started outside ee (or by `restart: always` on a daemon restart) | mailhog-site-integration.feature: "Enabling mailhog after its container was started outside ee configures the relay" `@known-bug` MAILHOG-1 |
 | B13 | Return values ignored: postfix stopped during enable | mailhog-site-integration.feature: "Enabling mailhog while postfix is stopped still configures the relay" `@known-bug` MAILHOG-3 |
 | B14 | Return value of `docker-compose up mailhog` ignored (image pull failure) | not covered: needs a broken image or registry; reported as part of MAILHOG-3 |
 | B15 | `EE::error()` inside enable skips rollback (MIG-11) | not covered: no failure point reachable without breaking the stack |
@@ -68,7 +72,7 @@ Suite for `ee mailhog enable|disable|status`. Sites are named `bh-mailhog-<n>.te
 | P7 | Whitelisted local requests: 200 without credentials | mailhog-auth.feature: "Whitelisted local requests need no credentials" |
 | P8 | Site HTTP auth does not grant MailHog (admin-tools file wins) | mailhog-auth.feature: "Site HTTP auth credentials do not open MailHog" |
 | P9 | After disable: path no longer reaches MailHog and stays behind auth | mailhog-mail.feature: "After disabling mailhog, ..."; mailhog-auth.feature: "With mailhog disabled, ..." |
-| P10 | Subdomain multisite (`*.site`) and alias domains | mailhog-routing.feature: "Subdomain multisite subsites and alias domains serve /ee-admin/mailhog/" |
+| P10 | Subdomain multisite (`*.site`) and alias domains (VIRTUAL_HOST compared by entries: site-type-wp lists `*.site` twice for subdom sites) | mailhog-routing.feature: "Subdomain multisite subsites and alias domains serve /ee-admin/mailhog/" |
 | P11 | HTTPS site (`--ssl=self`): HTTP 301 to HTTPS, HTTPS 200, auth on HTTPS | mailhog-routing.feature: "HTTPS sites redirect /ee-admin/mailhog/ to HTTPS and serve it there behind auth" |
 | M1 | `wp_mail()` via `ee shell` captured by MailHog (subject, recipient) | mailhog-mail.feature: "wp_mail() sent through ee shell is captured by MailHog" |
 | M2 | Several mails captured | mailhog-mail.feature: "Several mails are all captured" |
@@ -85,11 +89,11 @@ Suite for `ee mailhog enable|disable|status`. Sites are named `bh-mailhog-<n>.te
 | I3 | `ee site refresh` resets postfix then re-applies the mailhog relay | mailhog-mail.feature: "ee site refresh re-applies the mailhog relayhost after resetting postfix" |
 | I4 | `ee site refresh` keeps mailhog down when disabled | mailhog-site-integration.feature: "ee site refresh keeps mailhog down when it was disabled" |
 | I5 | `ee site restart` skips mailhog (state unchanged, capture keeps working) | mailhog-site-integration.feature: "ee site restart does not change the mailhog state (<state>)" (2 examples); mailhog-mail.feature: "ee site restart keeps mailhog up and capturing" |
-| I6 | `ee site delete` removes the mailhog container and the row | mailhog-site-integration.feature: "Deleting a site removes its mailhog container" |
+| I6 | `ee site delete` removes the mailhog container, every other site container and the row | mailhog-site-integration.feature: "Deleting a site removes its mailhog container" |
 | I7 | `ee site clone` re-runs `ee mailhog enable` on the clone | not covered: belongs to site-command's clone suite (needs the clone setup) |
 | I8 | `ee auth delete global` regenerates the admin-tools auth when a site has mailhog | not covered: destructive to the machine's global credentials and blocked by AUTH-8 behaviour; belongs to auth-command |
 
-Coverage estimate: 60 inventory items, 51 covered (3 of them only by `@known-bug` scenarios), C12 exercised but not asserted, 8 not covered with reasons above: about 85%. Excluding the core-owned global flags (C12 to C14), 51 of 57 mailhog-specific items, about 89%.
+Coverage estimate: 64 inventory items, 55 covered (6 of them only by `@known-bug` scenarios), C12 exercised but not asserted, 8 not covered with reasons above: about 86%. Excluding the core-owned global flags (C12 to C14), 55 of 61 mailhog-specific items, about 90%.
 
 ## Features and scenarios
 
@@ -99,15 +103,15 @@ Coverage estimate: 60 inventory items, 51 covered (3 of them only by `@known-bug
 | mailhog-lifecycle.feature | bh-mailhog-1.test (wp) | 20 (2 `@known-bug`) |
 | mailhog-mail.feature | bh-mailhog-2.test (wp) | 10 |
 | mailhog-auth.feature | bh-mailhog-3.test (wp) | 8 |
-| mailhog-site-integration.feature | bh-mailhog-4/7/8.test (wp), bh-mailhog-5.test (html), bh-mailhog-6.test (php) | 20 (2 `@known-bug`) |
+| mailhog-site-integration.feature | bh-mailhog-4/7/8.test (wp), bh-mailhog-5.test and bh-mailhog-11.test (html), bh-mailhog-6.test (php) | 22 (6 `@known-bug`) |
 | mailhog-routing.feature | bh-mailhog-9.test (wp subdom + alias bh-mailhog-9-alias.test), bh-mailhog-10.test (wp, `--ssl=self`) | 2 |
-| Total | 10 sites | 77 (4 `@known-bug`, 0 `@le`, 0 `@remote`, 0 `@destructive`) |
+| Total | 11 sites | 79 (8 `@known-bug`, 0 `@le`, 0 `@remote`, 0 `@destructive`) |
 
 No `@le` scenario: HTTPS routing is checked with `--ssl=self`, which needs no public DNS or issuance. No `@destructive` scenario: nothing here changes global services or config; the only global side effect is that `ee mailhog enable` creates the global admin-tools auth if the machine has none (it is kept afterwards, as ee itself does).
 
-Known bugs (IDs proposed for issues.md): MAILHOG-1 (drift between container state and `sites.mailhog_enabled`), MAILHOG-2 (`http(s)://` site names), MAILHOG-3 (enable ignores postconf/compose results). Run without them with `--tags='~@known-bug'`.
+Known bugs (issues.md): MAILHOG-1 (drift between container state and `sites.mailhog_enabled`, both directions), MAILHOG-2 (`http(s)://` site names, same root cause as ATC-2/LOGCMD-8/SHELL-3), MAILHOG-3 (enable ignores postconf/compose/restart results), MAILHOG-4 (global admin-tools auth set up before the site check), MAILHOG-5 (`--force` skips the site-type support check). Every `@known-bug` scenario asserts the intended behaviour, so it fails until the bug is fixed. Run without them with `--tags='~@known-bug'`.
 
-Estimated runtime: about 20 to 25 minutes (8 WordPress sites at 1 to 1.5 minutes each, 2 light sites, about 150 ee invocations; waits are polls capped at 30 to 60 seconds).
+Estimated runtime: about 22 to 27 minutes (8 WordPress sites at 1 to 1.5 minutes each, 3 light sites, about 160 ee invocations; waits are polls capped at 30 to 60 seconds).
 
 ## Context changes compared with site-command's FeatureContext
 
@@ -115,6 +119,8 @@ Estimated runtime: about 20 to 25 minutes (8 WordPress sites at 1 to 1.5 minutes
 - Cleanup deletes only prefixed sites, before and after each feature, instead of the upstream fixed site list.
 - `$commands` is declared (dynamic properties are deprecated since PHP 8.2), and `EE_ROOT_DIR` is only defined when core has not defined it yet.
 - New shared steps (last-command assertions, sqlite reads, label-based container lookup, CURLOPT_RESOLVE HTTP helpers with polling, file checks) live in a marked section; mailhog-specific steps are in a second section.
-- Upstream steps left as they are but worth knowing: "There should be :n containers with labels" has an inverted check, and "Following containers of site :site should be removed" looks for `<site>_<service>_1`, which compose v2 names never match, so it passes vacuously.
+- Upstream steps fixed: "There should be :n containers with labels" compared a string with an int using `===` and threw on a match, so it never failed; "Following containers of site :site should be removed" looked for compose v1 names (`<site>_<service>_1`) and always passed. Both now use label filters; the site delete scenario uses them.
+- A failed scenario restarts the containers it stopped with "I stop ... directly", so later scenarios do not inherit a stopped postfix.
+- `BEHAT_SITE_PREFIX` must look like `bh-<name>-`, so the cleanup can never match foreign sites.
 
 `vendor/bin/behat --dry-run --strict` reports no undefined or ambiguous steps. Its exit code is 1 even for the upstream site-command suite, because Behat 3.8 counts dry-run's skipped steps as failures under `--strict`.
