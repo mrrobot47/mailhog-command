@@ -190,6 +190,8 @@ function checkThatCsvStringContainsValues( $actualCSV, $expectedCSV ) {
 			$actual_row = array_intersect_key( array_combine( $actualHeaders, $actual_row ), $expected_row );
 			if ( $actual_row == $expected_row ) {
 				$expectedResult ++;
+				// One match per expected row, so duplicates can't stand in for a missing row.
+				break;
 			}
 		}
 	}

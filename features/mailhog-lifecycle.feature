@@ -76,7 +76,8 @@ Feature: Mailhog enable, disable and status on a WordPress site
     And the file "config/postfix/main.cf" of site "bh-mailhog-1.test" should match "/^relayhost =\s*$/m"
     And the site "bh-mailhog-1.test" should have "mailhog_enabled" set to "0"
     When I execute "postconf -h relayhost" in the "postfix" service of site "bh-mailhog-1.test"
-    Then STDOUT should be empty
+    Then the command should succeed
+    And STDOUT should be empty
 
   Scenario: Status reports DOWN after mailhog is disabled
     Given mailhog is disabled on site "bh-mailhog-1.test"
