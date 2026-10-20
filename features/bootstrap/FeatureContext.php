@@ -1336,7 +1336,7 @@ class FeatureContext implements Context
 		self::assertSiteName( $site );
 		$row = self::dbRow( $site );
 		if ( ! $this->mailhogStatus( $site ) && null !== $row && (int) $row['mailhog_enabled'] ) {
-			// DB says enabled but the container is down: `disable` refuses that (see MAILHOG-1), so bring it up first.
+			// DB says enabled but the container is down: `disable` refuses that (it checks only the container), so bring it up first.
 			$this->launch( 'bin/ee mailhog enable ' . $site . ' --force', EE_ROOT );
 		}
 		if ( $this->mailhogStatus( $site ) ) {
@@ -1375,7 +1375,7 @@ class FeatureContext implements Context
 			usleep( 500000 );
 		} while ( microtime( true ) < $deadline );
 
-		// No --user: the php image already runs as www-data, and --user with --command hits SHELL-1.
+		// No --user: the php image already runs as www-data, and --user with --command is quoted twice by ee shell and fails.
 		$this->commands[] = $this->launch(
 			sprintf( 'bin/ee shell %s --skip-tty --command=%s', $site, escapeshellarg( $command ) ),
 			EE_ROOT
